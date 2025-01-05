@@ -22,6 +22,7 @@ import wandb
 from datetime import datetime
 from sklearn.model_selection import train_test_split
 import json
+from rdkit import RDLogger
 from rdkit import Chem
 from rdkit.Chem import rdFMCS
 from pathlib import Path
@@ -42,6 +43,7 @@ from pprint import pprint
 # Import our custom tokenizer
 from models.smiles_tokenizer import SmilesTokenizer
 from models.multimodal_to_smiles import MultiModalToSMILESModel
+
 
 current_dir = os.path.dirname(os.path.realpath(__file__))
 vocab_path = os.path.join(current_dir, 'vocab.txt')
@@ -528,6 +530,7 @@ def get_domain_ranges(meta_data):
 
 # Add this main function to contain the training code
 def main():
+    RDLogger.DisableLog("rdApp.*")
     print("\n[Main] Starting training script...")
     args = parse_args()
     
