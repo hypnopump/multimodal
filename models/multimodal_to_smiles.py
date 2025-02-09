@@ -99,6 +99,17 @@ class MultiModalToSMILESModel(nn.Module):
 
         # 1) Encode IR inputs -> (B, seq_len, embed_dim)
         memory = self.encoder(None, ir_data, None)
+        if memory is None:
+            if target_seq is not None:
+                batch_size = target_seq.size(0)
+                device = target_seq.device
+            elif nmr_tokens is not None:
+                batch_size = nmr_tokens.size(0)
+                device = nmr_tokens.device
+            else:
+                batch_size = 1
+                device = th.device('cpu')
+            memory = th.zeros(batch_size, self.decoder.max_memory_length, self.decoder.memory_dim, device=device)
 
         if self.verbose:
             print("\n=== Starting Decoding ===")

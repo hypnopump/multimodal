@@ -82,6 +82,15 @@ def greedy_decode(model, nmr_tokens, ir_data, tokenizer, max_len=128, device=Non
         # Encode spectral data - pass as positional args
         memory = model.encoder(None, ir_data, None)  # NMR tokens not needed here
         
+        if memory is None:
+            if nmr_tokens is not None:
+                batch_size = nmr_tokens.size(0)
+            elif ir_data is not None:
+                batch_size = ir_data.size(0)
+            else:
+                batch_size = 1
+            memory = torch.zeros(batch_size, model.decoder.max_memory_length, model.decoder.memory_dim, device=device)
+        
         # Initialize storage for generated tokens
         generated_sequences = [[] for _ in range(batch_size)]
         for seq in generated_sequences:
@@ -132,7 +141,7 @@ def greedy_decode(model, nmr_tokens, ir_data, tokenizer, max_len=128, device=Non
         return decoded_sequences
 
 
-def evaluate_with_greedy_decode(model, test_loader, tokenizer, device, num_examples=None):
+def evaluate_with_greedy_decode(model, test_loader, tokenizer, device, num_examples=None, block_ir=False, block_nmr=False):
     """Evaluate model using greedy decoding"""
     model.eval()
     all_predictions = []
@@ -178,6 +187,12 @@ def evaluate_with_greedy_decode(model, test_loader, tokenizer, device, num_examp
     # Process the sampled examples
     with torch.no_grad():
         for target_tokens, ir_data, nmr_tokens, _ in sampled_data:
+            # Block signals if flags are set
+            if block_ir:
+                ir_data = None
+            if block_nmr:
+                nmr_tokens = None
+            
             # Move data to device
             target_tokens = target_tokens.to(device)
             if ir_data is not None:
@@ -628,6 +643,8 @@ def load_config(config_path=None):
 def parse_args():
     parser = argparse.ArgumentParser(description='Train SMILES generation model')
     parser.add_argument('--config', type=str, help='Path to config file')
+    parser.add_argument('--block-ir', action='store_true', help='Block IR signals in the model inputs')
+    parser.add_argument('--block-nmr', action='store_true', help='Block NMR signals in the model inputs')
     return parser.parse_args()
 
 
@@ -668,6 +685,10 @@ def calculate_scaled_lr(config, total_steps):
 def main():
     print("\n[Main] Starting training script...")
     args = parse_args()
+    
+    # Capture modality blocking flags
+    block_ir = args.block_ir
+    block_nmr = args.block_nmr
 
     print("[Main] Loading configuration...")
     config = load_config(args.config)
@@ -874,7 +895,7 @@ def main():
     global_step = 0
 
     # Helper for validation
-    def validate(model, loader, criterion, tokenizer, device):
+    def validate(model, loader, criterion, tokenizer, device, block_ir, block_nmr):
         model.eval()
         total_loss = 0.0
         total_batches = 0
@@ -883,6 +904,12 @@ def main():
         
         with torch.no_grad():
             for target_tokens, ir_data, nmr_tokens, _ in loader:
+                # Block modalities if flag is set
+                if block_ir:
+                    ir_data = None
+                if block_nmr:
+                    nmr_tokens = None
+                
                 target_tokens = target_tokens.to(device)
                 if ir_data is not None:
                     ir_data = ir_data.to(device)
@@ -998,6 +1025,12 @@ def main():
         for batch in pbar:
             target_tokens, ir_data, nmr_tokens, _ = batch
             
+            # Block signals if flags are set
+            if block_ir:
+                ir_data = None
+            if block_nmr:
+                nmr_tokens = None
+            
             target_tokens = target_tokens.to(device)
             if ir_data is not None:
                 ir_data = ir_data.to(device)
@@ -1044,7 +1077,7 @@ def main():
             # Periodic validation
             if global_step % validation_frequency == 0:
                 print(f"\nRunning validation at step {global_step}...")
-                val_metrics = validate(model, val_loader, criterion, tokenizer, device)
+                val_metrics = validate(model, val_loader, criterion, tokenizer, device, block_ir, block_nmr)
                 
                 # Create a new table for each validation step
                 examples_table = wandb.Table(columns=columns)
@@ -1102,7 +1135,9 @@ def main():
                     test_loader=test_loader,
                     tokenizer=tokenizer,
                     device=device,
-                    num_examples=100  # Evaluate on 100 examples for speed
+                    num_examples=100,  # Evaluate on 100 examples for speed
+                    block_ir=block_ir,
+                    block_nmr=block_nmr
                 )
                 
                 # Create a new table for greedy decode examples
@@ -1143,7 +1178,7 @@ def main():
 
     # Final test set evaluation
     print("\n[Main] Evaluating on test set...")
-    final_test_loss = validate(model, test_loader, criterion, tokenizer, device)
+    final_test_loss = validate(model, test_loader, criterion, tokenizer, device, block_ir, block_nmr)
     wandb.log({"test_loss": final_test_loss['val_loss']}, step=global_step)
     print(f"[Test] Loss: {final_test_loss['val_loss']:.4f}")
 
@@ -1153,7 +1188,9 @@ def main():
         model=model,
         test_loader=test_loader,
         tokenizer=tokenizer,
-        device=device
+        device=device,
+        block_ir=block_ir,
+        block_nmr=block_nmr
     )
     wandb.log({
         "final_greedy_valid_smiles": final_greedy_metrics['valid_smiles'],

@@ -54,4 +54,5 @@ data:
 wandb:
   project: "smiles-generation-mup"
   base_run_name: "smiles_gen_mup"
-  log_examples: true 
+  log_examples: true
+  save_local: True
