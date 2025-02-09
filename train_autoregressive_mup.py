@@ -851,7 +851,7 @@ def main():
         }
         
         # Log artifacts based on save_model_frequency from config
-        should_log_artifact = (global_step % config['training']['save_model_frequency'] == 0)
+        should_log_artifact = (global_step % config['training'].get("save_model_frequency", config['training']['save_frequency']) == 0)
         
         if should_log_artifact:
             # Create and log latest artifact
@@ -1127,6 +1127,12 @@ def main():
                     best_val_loss = val_metrics['val_loss']
                     print(f"New best validation loss: {best_val_loss:.4f}")
 
+                # Save checkpoint based on configured save frequency
+                checkpoint_frequency = config['training'].get("save_model_frequency", config['training']['save_frequency'])
+                if global_step % checkpoint_frequency == 0:
+                    is_best = (val_metrics['val_loss'] == best_val_loss)
+                    save_checkpoint(model, optimizer, epoch+1, global_step, val_metrics['val_loss'], is_best=is_best)
+
             # Periodic greedy decode evaluation
             if global_step % greedy_decode_frequency == 0:
                 print(f"\nRunning greedy decode evaluation at step {global_step}...")
@@ -1204,16 +1210,15 @@ def main():
     print(f"[Final Greedy] Tanimoto similarity: {final_greedy_metrics['avg_tanimoto']:.4f}")
 
     # Save final model if requested
-    if config['training'].get('save_local', False):
-        save_checkpoint(
-            model=model,
-            optimizer=optimizer,
-            epoch=NUM_EPOCHS,
-            global_step=global_step,
-            val_loss=final_test_loss['val_loss'],
-            is_best=final_test_loss['val_loss'] < best_val_loss
-        )
-        print(f"Final checkpoint saved in {save_dir}")
+    save_checkpoint(
+        model=model,
+        optimizer=optimizer,
+        epoch=NUM_EPOCHS,
+        global_step=global_step,
+        val_loss=final_test_loss['val_loss'],
+        is_best=final_test_loss['val_loss'] < best_val_loss
+    )
+    print(f"Final checkpoint saved in {save_dir}")
 
     print("[Main] Training script completed.")
     wandb.finish()
