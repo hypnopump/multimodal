@@ -8,6 +8,8 @@ import yaml
 
 from rdkit import Chem, DataStructs
 from rdkit.Chem import AllChem
+from rdkit.Chem import rdMolDescriptors
+from rdkit.Chem import rdFingerprintGenerator
 
 # Import model and tokenizer
 from models.multimodal_to_smiles import MultiModalToSMILESModel
@@ -106,7 +108,13 @@ def compute_fingerprint(smiles):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
-    fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
+    try:
+        # Use the new, consistent API via rdFingerprintGenerator
+        generator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
+        fp = generator.GetFingerprint(mol)
+    except AttributeError:
+        # Fall back to the older API if necessary
+        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
     return fp
 
 
@@ -123,30 +131,67 @@ class SimpleSpectralSmilesDataset:
     """
     def __init__(self, data_dir, split='test', smiles_tokenizer=None, spectral_tokenizer=None, max_smiles_len=512, max_nmr_len=128):
         self.data_dir = Path(data_dir)
-        src_file = self.data_dir / f"src-{split}.txt"
-        tgt_file = self.data_dir / f"tgt-{split}.txt"
-        with open(src_file) as f:
-            self.sources = [line.strip() for line in f]
-        with open(tgt_file) as f:
-            self.targets = [line.strip().replace(" ", "") for line in f]
         self.smiles_tokenizer = smiles_tokenizer
         self.spectral_tokenizer = spectral_tokenizer
         self.max_smiles_len = max_smiles_len
         self.max_nmr_len = max_nmr_len
-        
-        # Load IR data if available
-        ir_file = self.data_dir / f"ir-{split}.npy"
-        self.ir_data = None
-        if ir_file.exists():
-            try:
-                self.ir_data = np.load(ir_file, mmap_mode='r')
-                if len(self.ir_data.shape) == 1:
-                    num_samples = len(self.sources)
-                    feature_dim = self.ir_data.shape[0] // num_samples
-                    self.ir_data = self.ir_data.reshape(num_samples, feature_dim)
-            except Exception as e:
-                print(f"[Dataset] Failed to load IR data: {e}")
+        self.split = split
+
+        if split == "all":
+            splits = ["train", "val", "test"]
+            self.sources = []
+            self.targets = []
+            ir_data_list = []
+            for s in splits:
+                src_file = self.data_dir / f"src-{s}.txt"
+                tgt_file = self.data_dir / f"tgt-{s}.txt"
+                if src_file.exists() and tgt_file.exists():
+                    with open(src_file) as f:
+                        src_data = [line.strip() for line in f]
+                    with open(tgt_file) as f:
+                        tgt_data = [line.strip().replace(" ", "") for line in f]
+                    self.sources.extend(src_data)
+                    self.targets.extend(tgt_data)
+
+                    ir_path = self.data_dir / f"ir-{s}.npy"
+                    if ir_path.exists():
+                        try:
+                            part = np.memmap(ir_path, dtype='float32', mode='r', shape=None)
+                            array_shape = part.shape
+                            if len(array_shape) == 1:
+                                num_samples = len(src_data)
+                                feature_dim = array_shape[0] // num_samples
+                                part = part.reshape(num_samples, feature_dim)
+                            ir_data_list.append(part)
+                        except Exception as e:
+                            print(f"[Dataset] Failed to load IR data for split {s}: {e}")
+            if ir_data_list:
+                self.ir_data = np.concatenate(ir_data_list, axis=0)
+                print(f"[Dataset] Loaded combined IR data with shape: {self.ir_data.shape}")
+            else:
                 self.ir_data = None
+        else:
+            # Original logic for a single split
+            src_file = self.data_dir / f"src-{split}.txt"
+            tgt_file = self.data_dir / f"tgt-{split}.txt"
+            with open(src_file) as f:
+                self.sources = [line.strip() for line in f]
+            with open(tgt_file) as f:
+                self.targets = [line.strip().replace(" ", "") for line in f]
+            ir_path = self.data_dir / f"ir-{split}.npy"
+            self.ir_data = None
+            if ir_path.exists():
+                try:
+                    self.ir_data = np.memmap(ir_path, dtype='float32', mode='r', shape=None)
+                    array_shape = self.ir_data.shape
+                    if len(array_shape) == 1:
+                        num_samples = len(self.sources)
+                        feature_dim = array_shape[0] // num_samples
+                        self.ir_data = self.ir_data.reshape(num_samples, feature_dim)
+                    print(f"[Dataset] Loaded IR data with shape: {self.ir_data.shape}")
+                except Exception as e:
+                    print(f"[Dataset] Failed to load IR data: {e}")
+                    self.ir_data = None
 
     def __len__(self):
         return len(self.targets)
@@ -178,13 +223,19 @@ class SimpleSpectralSmilesDataset:
 
 def main():
     parser = argparse.ArgumentParser(description='Search dataset for nearest SMILES and run inference on spectra')
-    parser.add_argument('--query', type=str, help='Query SMILES string (ignored if --use_candidates is set)')
+    parser.add_argument('--query', type=str, help='Query SMILES string (ignored if use_candidates is enabled)')
     parser.add_argument('--k', type=int, default=5, help='Number of nearest neighbors to find')
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to pretrained model checkpoint')
     parser.add_argument('--config', type=str, default=None, help='Path to config file (YAML)')
     parser.add_argument('--split', type=str, default='test', help='Dataset split to use (train/val/test)')
-    parser.add_argument('--use_candidates', action='store_true', help='If set, use hardcoded candidate SMILES instead of --query')
+    parser.add_argument('--use_candidates', dest='use_candidates', action='store_true', help='Use hardcoded candidate SMILES')
+    parser.add_argument('--no-use_candidates', dest='use_candidates', action='store_false', help='Do not use candidate SMILES')
+    parser.set_defaults(use_candidates=True)
+    parser.add_argument('--use_all', action='store_true', help='Use entire dataset (train+val+test) instead of a single split')
     args = parser.parse_args()
+
+    # Determine which split to load
+    split_to_use = "all" if args.use_all else args.split
 
     # Load configuration
     config = load_config(args.config)
@@ -203,7 +254,7 @@ def main():
     # Create dataset
     dataset = SimpleSpectralSmilesDataset(
         data_dir=config['data']['tokenized_dir'],
-        split=args.split,
+        split=split_to_use,
         smiles_tokenizer=tokenizer,
         spectral_tokenizer=nmr_tokenizer,
         max_smiles_len=config['model']['max_seq_length'],
