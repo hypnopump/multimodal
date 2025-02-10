@@ -24,8 +24,8 @@ training:
   weight_decay: 0.1
   validation_frequency: 100
   logging_frequency: 10
-  save_frequency: 10000
-  save_model_frequency: 10000
+  save_frequency: 10
+  save_model_frequency: 10
   greedy_decode_frequency: 500
 
 # Optimizer Configuration

@@ -755,8 +755,7 @@ def main():
         f"l{config['model']['num_layers']}_"
         f"bs{config['training']['batch_size']}_"
         f"lr{scaled_lr:.2e}_"
-        f"warm{config['scheduler']['warmup_steps']}_"
-        f"{datetime.now().strftime('%m%d_%H%M')}"
+        f"warm{config['scheduler']['warmup_steps']}"
     )
 
     wandb.init(
@@ -811,8 +810,8 @@ def main():
     if config['scheduler'].get('type') == 'cosine':
         print(f"      - Min LR: {config['training'].get('min_learning_rate', scaled_lr/10):.2e}")
 
-    print("\n[Main] Creating checkpoint directory...")
-    save_dir = Path('checkpoints') / datetime.now().strftime('%Y%m%d_%H%M%S')
+    print("\n[Main] Using fixed checkpoint directory...")
+    save_dir = Path('checkpoints')
     save_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Main] Checkpoint directory: {save_dir}")
 
@@ -836,10 +835,9 @@ def main():
         }
         
         # Save as latest checkpoint locally
-        if latest_model_path and os.path.exists(latest_model_path):
-            os.remove(latest_model_path)  # Remove old latest checkpoint
-        
-        latest_model_path = save_dir / "latest_checkpoint.pt"
+        latest_model_path = save_dir / f"{run_name}_latest_checkpoint.pt"
+        if latest_model_path.exists():
+            os.remove(latest_model_path)
         torch.save(checkpoint, latest_model_path)
         
         # Create metadata
@@ -868,7 +866,7 @@ def main():
             if best_model_path and os.path.exists(best_model_path):
                 os.remove(best_model_path)  # Remove old best checkpoint
             
-            best_model_path = save_dir / "best_model.pt"
+            best_model_path = save_dir / f"{run_name}_best_model.pt"
             torch.save(checkpoint, best_model_path)
             
             # Always log best model artifact since it's important
@@ -1126,12 +1124,6 @@ def main():
                 if val_metrics['val_loss'] < best_val_loss:
                     best_val_loss = val_metrics['val_loss']
                     print(f"New best validation loss: {best_val_loss:.4f}")
-
-                # Save checkpoint based on configured save frequency
-                checkpoint_frequency = config['training'].get("save_model_frequency", config['training']['save_frequency'])
-                if global_step % checkpoint_frequency == 0:
-                    is_best = (val_metrics['val_loss'] == best_val_loss)
-                    save_checkpoint(model, optimizer, epoch+1, global_step, val_metrics['val_loss'], is_best=is_best)
 
             # Periodic greedy decode evaluation
             if global_step % greedy_decode_frequency == 0:
