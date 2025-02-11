@@ -42,7 +42,7 @@ python3 build_vocab.py
 
 # train the model
 CUDA_VISIBLE_DEVICES=0 python3 train_autoregressive.py --config configs/local_config.yaml
-CUDA_VISIBLE_DEVICES=0 python3 train_autoregressive.py --config configs/real_config.yaml
+CUDA_VISIBLE_DEVICES=2 python3 train_autoregressive.py --config configs/real_config.yaml
 
 # MUP
 CUDA_VISIBLE_DEVICES=1 python3 train_autoregressive_mup.py --config configs/real_config.yaml
